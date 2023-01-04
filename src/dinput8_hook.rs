@@ -9,8 +9,8 @@ use windows::{
     s,
     Win32::{
         Devices::HumanInterfaceDevice::{
-            GUID_SysKeyboard, IDirectInput8A, IDirectInput8W, IDirectInputDevice8A, DIJOYSTATE2,
-            DISCL_FOREGROUND, DISCL_NONEXCLUSIVE, DISCL_NOWINKEY, DISFFC_CONTINUE,
+            GUID_SysKeyboard, IDirectInput8W, IDirectInputDevice8A, DIJOYSTATE2, DISCL_FOREGROUND,
+            DISCL_NONEXCLUSIVE, DISCL_NOWINKEY, DISFFC_CONTINUE,
         },
         Foundation::{FARPROC, HINSTANCE, HWND, MAX_PATH},
         System::{
@@ -27,22 +27,6 @@ static mut ORIGINAL_DIRECT_INPUT8_CREATE: FARPROC = None;
 static mut ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE: usize = 0;
 static mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE: usize = 0;
 static mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL: usize = 0;
-
-pub fn setup_dinput8_hook() {
-    let system_directory = unsafe {
-        let mut buf = [0u16; MAX_PATH as usize];
-        GetSystemDirectoryW(Some(&mut buf));
-        PCWSTR::from_raw(buf.as_mut_ptr()).to_string().unwrap()
-    };
-    let dll_path = format!("{}\\dinput8.dll", system_directory);
-    let dll_instance = unsafe { LoadLibraryW(PCWSTR::from(&HSTRING::from(dll_path))) }.unwrap();
-
-    if dll_instance.is_invalid() {
-        panic!();
-    }
-    let func = unsafe { GetProcAddress(dll_instance, s!("DirectInput8Create")) };
-    unsafe { ORIGINAL_DIRECT_INPUT8_CREATE = Some(func.unwrap()) };
-}
 
 extern "system" fn i_direct_input_device_8_a_get_device_state_hook(
     this: *const IDirectInputDevice8A,
@@ -63,30 +47,6 @@ extern "system" fn i_direct_input_device_8_a_get_device_state_hook(
     let joy_state = lpv_data as *mut DIJOYSTATE2;
     modify_state(unsafe { joy_state.as_mut().unwrap() });
     result
-}
-
-fn setup_i_direct_input_device_8_a_get_device_state_hook(
-    direct_input_device: *const IDirectInputDevice8A,
-) {
-    let vtable = unsafe { *(direct_input_device as *const *mut *const c_void) };
-    let mut old_protect: PAGE_PROTECTION_FLAGS = Default::default();
-    let ptr = unsafe { vtable.offset(9) };
-    unsafe {
-        VirtualProtect(
-            ptr as *const c_void,
-            3 * size_of::<&c_void>(),
-            PAGE_READWRITE,
-            &mut old_protect,
-        );
-        ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE = *ptr as usize;
-        *ptr = i_direct_input_device_8_a_get_device_state_hook as usize as _;
-        VirtualProtect(
-            ptr as *const c_void,
-            3 * size_of::<&c_void>(),
-            old_protect,
-            &mut old_protect,
-        );
-    }
 }
 
 fn write_log(msg: &str) {
@@ -126,12 +86,15 @@ extern "system" fn i_direct_input_device_8_a_set_cooperative_level_hook(
     result
 }
 
-fn setup_i_direct_input_device_8_a_set_cooperative_level_hook(
-    direct_input_device: *const IDirectInputDevice8A,
+fn setup_method_hook<T>(
+    obj: *const T,
+    method_offset: isize,
+    hooked_method_addr: usize,
+    original_method_addr: &mut usize,
 ) {
-    let vtable = unsafe { *(direct_input_device as *const *mut *const c_void) };
+    let vtable = unsafe { *(obj as *const *mut *const c_void) };
     let mut old_protect: PAGE_PROTECTION_FLAGS = Default::default();
-    let ptr = unsafe { vtable.offset(13) };
+    let ptr = unsafe { vtable.offset(method_offset) };
     unsafe {
         VirtualProtect(
             ptr as *const c_void,
@@ -139,8 +102,8 @@ fn setup_i_direct_input_device_8_a_set_cooperative_level_hook(
             PAGE_READWRITE,
             &mut old_protect,
         );
-        ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL = *ptr as usize;
-        *ptr = i_direct_input_device_8_a_set_cooperative_level_hook as usize as _;
+        *original_method_addr = *ptr as usize;
+        *ptr = hooked_method_addr as _;
         VirtualProtect(
             ptr as *const c_void,
             3 * size_of::<&c_void>(),
@@ -150,7 +113,7 @@ fn setup_i_direct_input_device_8_a_set_cooperative_level_hook(
     }
 }
 
-unsafe extern "system" fn i_direct_input_8_a_create_device_hook(
+extern "system" fn i_direct_input_8_a_create_device_hook(
     this: *const IDirectInput8W,
     guid: *const GUID,
     direct_input_device: *mut *const IDirectInputDevice8A,
@@ -165,41 +128,29 @@ unsafe extern "system" fn i_direct_input_8_a_create_device_hook(
 
     let func: Func = unsafe { transmute(ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE) };
     let result = func(this, guid, direct_input_device, unk_outer);
-    if result.is_err() || *guid == GUID_SysKeyboard {
-        setup_i_direct_input_device_8_a_set_cooperative_level_hook(*direct_input_device);
+    if result.is_err() {
         return result;
     }
-
-    setup_i_direct_input_device_8_a_get_device_state_hook(*direct_input_device);
-
+    if unsafe { *guid } == GUID_SysKeyboard {
+        setup_method_hook(
+            unsafe { *direct_input_device },
+            13,
+            i_direct_input_device_8_a_set_cooperative_level_hook as usize,
+            unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL },
+        );
+        return result;
+    }
+    setup_method_hook(
+        unsafe { *direct_input_device },
+        9,
+        i_direct_input_device_8_a_get_device_state_hook as usize,
+        unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE },
+    );
     result
 }
 
-fn setup_i_direct_input_8_a_create_device_hook(obj: *const IDirectInput8A) {
-    let iface = obj as *const *mut *const c_void;
-    let vtable = unsafe { *iface };
-    let ptr = unsafe { vtable.offset(3) };
-    unsafe { ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE = *ptr as usize };
-    let mut old_protect: PAGE_PROTECTION_FLAGS = Default::default();
-    unsafe {
-        VirtualProtect(
-            ptr as *const c_void,
-            size_of::<&c_void>(),
-            PAGE_READWRITE,
-            &mut old_protect,
-        );
-        *ptr = i_direct_input_8_a_create_device_hook as usize as _;
-        VirtualProtect(
-            ptr as *const c_void,
-            size_of::<&c_void>(),
-            old_protect,
-            &mut old_protect,
-        );
-    }
-}
-
 #[no_mangle]
-pub unsafe extern "system" fn DirectInput8Create(
+pub extern "system" fn DirectInput8Create(
     inst: HINSTANCE,
     version: u32,
     riidltf: *const GUID,
@@ -220,7 +171,28 @@ pub unsafe extern "system" fn DirectInput8Create(
         return result;
     }
 
-    setup_i_direct_input_8_a_create_device_hook(*out as _);
+    setup_method_hook(
+        unsafe { *out },
+        3,
+        i_direct_input_8_a_create_device_hook as usize,
+        unsafe { &mut ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE },
+    );
 
     result
+}
+
+pub fn setup_dinput8_hook() {
+    let system_directory = unsafe {
+        let mut buf = [0u16; MAX_PATH as usize];
+        GetSystemDirectoryW(Some(&mut buf));
+        PCWSTR::from_raw(buf.as_mut_ptr()).to_string().unwrap()
+    };
+    let dll_path = format!("{}\\dinput8.dll", system_directory);
+    let dll_instance = unsafe { LoadLibraryW(PCWSTR::from(&HSTRING::from(dll_path))) }.unwrap();
+
+    if dll_instance.is_invalid() {
+        panic!();
+    }
+    let func = unsafe { GetProcAddress(dll_instance, s!("DirectInput8Create")) };
+    unsafe { ORIGINAL_DIRECT_INPUT8_CREATE = Some(func.unwrap()) };
 }
