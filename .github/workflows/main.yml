@@ -22,14 +22,10 @@ jobs:
         with:
           path: target
           key: cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: i686-pc-windows-msvc
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --target i686-pc-windows-msvc --release
+      - shell: bash
+        run: rustup target add i686-pc-windows-msvc
+      - shell: bash
+        run: cargo build --target i686-pc-windows-msvc --release
       - shell: bash
         run: |
           mkdir artifact
