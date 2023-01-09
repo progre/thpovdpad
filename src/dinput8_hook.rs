@@ -156,14 +156,14 @@ extern "system" fn i_direct_input_8_a_create_device_hook(
             i_direct_input_device_8_a_set_cooperative_level_hook as _,
             unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL },
         );
-        return result;
+    } else {
+        setup_method_hook(
+            unsafe { *direct_input_device } as _,
+            9,
+            i_direct_input_device_8_a_get_device_state_hook as _,
+            unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE },
+        );
     }
-    setup_method_hook(
-        unsafe { *direct_input_device } as _,
-        9,
-        i_direct_input_device_8_a_get_device_state_hook as _,
-        unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE },
-    );
     result
 }
 
