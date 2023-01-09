@@ -1,5 +1,6 @@
 use std::{
     ffi::c_void,
+    fs::File,
     mem::{size_of, transmute},
 };
 
@@ -14,7 +15,7 @@ use windows::{
         },
         Foundation::{FARPROC, HINSTANCE, HWND, MAX_PATH},
         System::{
-            LibraryLoader::{GetProcAddress, LoadLibraryW},
+            LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryW},
             Memory::{VirtualProtect, PAGE_PROTECTION_FLAGS, PAGE_READWRITE},
             SystemInformation::GetSystemDirectoryW,
         },
@@ -50,18 +51,35 @@ extern "system" fn i_direct_input_device_8_a_get_device_state_hook(
 }
 
 fn write_log(msg: &str) {
-    const P_LOG: *mut *mut u8 = (0x4A5940 + 0x2000) as *mut *mut u8;
-    unsafe { assert!(0x4A5940 <= (*P_LOG as usize) && (*P_LOG as usize) < 0x4A5940 + 0x2000) };
+    const TH11_EXE_SIZE: u64 = 829584;
 
-    let msg = format!("{}\r\n\0", msg);
-    let msg = SHIFT_JIS.encode(&msg).0;
-
-    unsafe {
-        msg.as_ptr()
-            .copy_to(*P_LOG, P_LOG as usize - *P_LOG as usize);
-        *(P_LOG as *mut usize) += msg.len() - 1;
-        assert!(*(P_LOG as *mut usize) < P_LOG as usize);
+    let filepath = unsafe {
+        let mut buf = [0u16; MAX_PATH as usize];
+        GetModuleFileNameW(HINSTANCE(0), &mut buf);
+        PCWSTR::from_raw(buf.as_mut_ptr()).to_string().unwrap()
     };
+
+    if File::open(filepath).unwrap().metadata().unwrap().len() == TH11_EXE_SIZE {
+        const LOG_ADDR: usize = 0x004A5940;
+        const LOG_CURSOR_ADDR: usize = LOG_ADDR + 0x2000;
+        let current_addr_cursor = unsafe { *(LOG_CURSOR_ADDR as *const usize) };
+        assert!((LOG_ADDR..(LOG_ADDR + 0x2000)).contains(&current_addr_cursor));
+
+        let msg = format!("{}\r\n\0", msg);
+        let msg = SHIFT_JIS.encode(&msg).0;
+
+        unsafe {
+            msg.as_ptr().copy_to(
+                current_addr_cursor as *mut u8,
+                LOG_CURSOR_ADDR - current_addr_cursor,
+            )
+        };
+        let current_addr_cursor = current_addr_cursor + msg.len() - 1;
+        assert!(current_addr_cursor < LOG_CURSOR_ADDR);
+        unsafe { *(LOG_CURSOR_ADDR as *mut usize) = current_addr_cursor };
+    } else {
+        println!("{}", msg);
+    }
 }
 
 extern "system" fn i_direct_input_device_8_a_set_cooperative_level_hook(
@@ -86,27 +104,27 @@ extern "system" fn i_direct_input_device_8_a_set_cooperative_level_hook(
     result
 }
 
-fn setup_method_hook<T>(
-    obj: *const T,
+fn setup_method_hook(
+    obj: *const *mut usize,
     method_offset: isize,
     hooked_method_addr: usize,
     original_method_addr: &mut usize,
 ) {
-    let vtable = unsafe { *(obj as *const *mut *const c_void) };
+    let vtable = unsafe { *obj };
     let mut old_protect: PAGE_PROTECTION_FLAGS = Default::default();
-    let ptr = unsafe { vtable.offset(method_offset) };
+    let method_addr = unsafe { vtable.offset(method_offset) };
     unsafe {
         VirtualProtect(
-            ptr as *const c_void,
-            3 * size_of::<&c_void>(),
+            method_addr as _,
+            size_of::<usize>(),
             PAGE_READWRITE,
             &mut old_protect,
         );
-        *original_method_addr = *ptr as usize;
-        *ptr = hooked_method_addr as _;
+        *original_method_addr = *method_addr;
+        *method_addr = hooked_method_addr;
         VirtualProtect(
-            ptr as *const c_void,
-            3 * size_of::<&c_void>(),
+            method_addr as _,
+            size_of::<usize>(),
             old_protect,
             &mut old_protect,
         );
@@ -116,13 +134,13 @@ fn setup_method_hook<T>(
 extern "system" fn i_direct_input_8_a_create_device_hook(
     this: *const IDirectInput8W,
     guid: *const GUID,
-    direct_input_device: *mut *const IDirectInputDevice8A,
+    direct_input_device: *mut *mut IDirectInputDevice8A,
     unk_outer: *const IUnknown,
 ) -> HRESULT {
     type Func = extern "system" fn(
         this: *const IDirectInput8W,
         guid: *const GUID,
-        direct_input_device: *mut *const IDirectInputDevice8A,
+        direct_input_device: *mut *mut IDirectInputDevice8A,
         unk_outer: *const IUnknown,
     ) -> HRESULT;
 
@@ -133,17 +151,17 @@ extern "system" fn i_direct_input_8_a_create_device_hook(
     }
     if unsafe { *guid } == GUID_SysKeyboard {
         setup_method_hook(
-            unsafe { *direct_input_device },
+            unsafe { *direct_input_device } as _,
             13,
-            i_direct_input_device_8_a_set_cooperative_level_hook as usize,
+            i_direct_input_device_8_a_set_cooperative_level_hook as _,
             unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL },
         );
         return result;
     }
     setup_method_hook(
-        unsafe { *direct_input_device },
+        unsafe { *direct_input_device } as _,
         9,
-        i_direct_input_device_8_a_get_device_state_hook as usize,
+        i_direct_input_device_8_a_get_device_state_hook as _,
         unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE },
     );
     result
@@ -155,14 +173,14 @@ pub extern "system" fn DirectInput8Create(
     version: u32,
     riidltf: *const GUID,
     out: *mut *mut c_void,
-    unkouter: IUnknown,
+    unkouter: *const IUnknown,
 ) -> HRESULT {
     type Func = extern "system" fn(
         inst: HINSTANCE,
         version: u32,
         riidltf: *const GUID,
         out: *mut *mut c_void,
-        unkouter: IUnknown,
+        unkouter: *const IUnknown,
     ) -> HRESULT;
 
     let func: Func = unsafe { transmute(ORIGINAL_DIRECT_INPUT8_CREATE) };
@@ -172,9 +190,9 @@ pub extern "system" fn DirectInput8Create(
     }
 
     setup_method_hook(
-        unsafe { *out },
+        unsafe { *out } as _,
         3,
-        i_direct_input_8_a_create_device_hook as usize,
+        i_direct_input_8_a_create_device_hook as _,
         unsafe { &mut ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE },
     );
 
