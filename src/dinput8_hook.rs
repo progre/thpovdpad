@@ -16,7 +16,6 @@ use windows::{
         Foundation::{FARPROC, HINSTANCE, HWND, MAX_PATH},
         System::{
             LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryW},
-            Memory::{VirtualProtect, PAGE_PROTECTION_FLAGS, PAGE_READWRITE},
             SystemInformation::GetSystemDirectoryW,
         },
     },
@@ -111,23 +110,10 @@ fn setup_method_hook(
     original_method_addr: &mut usize,
 ) {
     let vtable = unsafe { *obj };
-    let mut old_protect: PAGE_PROTECTION_FLAGS = Default::default();
     let method_addr = unsafe { vtable.offset(method_offset) };
     unsafe {
-        VirtualProtect(
-            method_addr as _,
-            size_of::<usize>(),
-            PAGE_READWRITE,
-            &mut old_protect,
-        );
         *original_method_addr = *method_addr;
         *method_addr = hooked_method_addr;
-        VirtualProtect(
-            method_addr as _,
-            size_of::<usize>(),
-            old_protect,
-            &mut old_protect,
-        );
     }
 }
 
