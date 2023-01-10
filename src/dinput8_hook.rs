@@ -10,8 +10,8 @@ use windows::{
     s,
     Win32::{
         Devices::HumanInterfaceDevice::{
-            IDirectInput8A, IDirectInputDevice8A, DIJOYSTATE, DISCL_FOREGROUND, DISCL_NONEXCLUSIVE,
-            DISCL_NOWINKEY, DISFFC_CONTINUE,
+            IDirectInput8A, IDirectInputDevice8A, DIJOYSTATE, DIJOYSTATE2, DISCL_FOREGROUND,
+            DISCL_NONEXCLUSIVE, DISCL_NOWINKEY, DISFFC_CONTINUE,
         },
         Foundation::{FARPROC, HINSTANCE, HWND, MAX_PATH},
         System::{
@@ -41,7 +41,9 @@ extern "system" fn i_direct_input_device_8_a_get_device_state_hook(
 
     let func: Func = unsafe { transmute(ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE) };
     let result = func(this, cb_data, lpv_data);
-    if result.is_err() || (cb_data as usize) < size_of::<DIJOYSTATE>() {
+    if result.is_err()
+        || ![size_of::<DIJOYSTATE>(), size_of::<DIJOYSTATE2>()].contains(&(cb_data as usize))
+    {
         return result;
     }
     let joy_state = lpv_data as *mut DIJOYSTATE;
