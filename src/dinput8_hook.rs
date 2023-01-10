@@ -10,8 +10,8 @@ use windows::{
     s,
     Win32::{
         Devices::HumanInterfaceDevice::{
-            IDirectInput8A, IDirectInput8W, IDirectInputDevice8A, DIJOYSTATE, DISCL_FOREGROUND,
-            DISCL_NONEXCLUSIVE, DISCL_NOWINKEY, DISFFC_CONTINUE,
+            IDirectInput8A, IDirectInputDevice8A, DIJOYSTATE, DISCL_FOREGROUND, DISCL_NONEXCLUSIVE,
+            DISCL_NOWINKEY, DISFFC_CONTINUE,
         },
         Foundation::{FARPROC, HINSTANCE, HWND, MAX_PATH},
         System::{
@@ -59,23 +59,21 @@ fn write_log(msg: &str) {
     };
 
     if File::open(filepath).unwrap().metadata().unwrap().len() == TH11_EXE_SIZE {
-        const LOG_ADDR: usize = 0x004A5940;
-        const LOG_CURSOR_ADDR: usize = LOG_ADDR + 0x2000;
-        let current_addr_cursor = unsafe { *(LOG_CURSOR_ADDR as *const usize) };
-        assert!((LOG_ADDR..(LOG_ADDR + 0x2000)).contains(&current_addr_cursor));
+        const LOG_HEAD_ADDR: usize = 0x004A5940;
+        const LOG_TAIL: *mut *mut u8 = (LOG_HEAD_ADDR + 0x2000) as _;
+        let valid_addr_range = LOG_HEAD_ADDR..(LOG_TAIL as usize);
+
+        let current_tail = unsafe { *LOG_TAIL };
+        assert!(valid_addr_range.contains(&(current_tail as usize)));
+        let capacity = LOG_TAIL as usize - current_tail as usize;
 
         let msg = format!("{}\r\n\0", msg);
-        let msg = SHIFT_JIS.encode(&msg).0;
+        let (msg, _, _) = SHIFT_JIS.encode(&msg);
+        let new_tail = unsafe { current_tail.add(msg.len() - 1) };
+        assert!(valid_addr_range.contains(&(new_tail as usize)));
 
-        unsafe {
-            msg.as_ptr().copy_to(
-                current_addr_cursor as *mut u8,
-                LOG_CURSOR_ADDR - current_addr_cursor,
-            )
-        };
-        let current_addr_cursor = current_addr_cursor + msg.len() - 1;
-        assert!(current_addr_cursor < LOG_CURSOR_ADDR);
-        unsafe { *(LOG_CURSOR_ADDR as *mut usize) = current_addr_cursor };
+        unsafe { msg.as_ptr().copy_to(new_tail, capacity) };
+        unsafe { *LOG_TAIL = new_tail };
     } else {
         println!("{}", msg);
     }
@@ -96,59 +94,59 @@ extern "system" fn i_direct_input_device_8_a_set_cooperative_level_hook(
         && flags == DISCL_NOWINKEY + DISCL_FOREGROUND + DISCL_NONEXCLUSIVE
     {
         // HACK: 地霊殿のみ dinput8 の初期化に失敗する為無理矢理成功させる
-        write_log("【THPovDpad】 SetCooperativeLevel() をパッチしました");
+        write_log("【THPovDpad】 SetCooperativeLevel() をパッチします");
 
         return func(this, HWND(0), DISFFC_CONTINUE + DISCL_NONEXCLUSIVE);
     }
     result
 }
 
-fn setup_method_hook(
-    obj: *const *mut usize,
+unsafe fn setup_method_hook(
+    vtable: *mut usize,
     method_offset: isize,
     hooked_method_addr: usize,
     original_method_addr: &mut usize,
 ) {
-    let vtable = unsafe { *obj };
-    let method_addr = unsafe { vtable.offset(method_offset) };
-    unsafe {
-        *original_method_addr = *method_addr;
-        *method_addr = hooked_method_addr;
-    }
+    let method_addr = vtable.offset(method_offset);
+    *original_method_addr = *method_addr;
+    *method_addr = hooked_method_addr;
 }
 
 extern "system" fn i_direct_input_8_a_create_device_hook(
-    this: *const IDirectInput8W,
+    this: *const IDirectInput8A,
     guid: *const GUID,
-    direct_input_device: *mut *mut IDirectInputDevice8A,
+    out_direct_input_device: *mut *mut IDirectInputDevice8A,
     unk_outer: *const IUnknown,
 ) -> HRESULT {
     type Func = extern "system" fn(
-        this: *const IDirectInput8W,
+        this: *const IDirectInput8A,
         guid: *const GUID,
-        direct_input_device: *mut *mut IDirectInputDevice8A,
+        out_direct_input_device: *mut *mut IDirectInputDevice8A,
         unk_outer: *const IUnknown,
     ) -> HRESULT;
 
     let func: Func = unsafe { transmute(ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE) };
-    let result = func(this, guid, direct_input_device, unk_outer);
+    let result = func(this, guid, out_direct_input_device, unk_outer);
     if result.is_err() {
         return result;
     }
-    // NOTE: vtable はコンストラクタ―から生成される全てのインスタンスで共通 (1敗)
     if unsafe { ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE } == 0 {
-        setup_method_hook(
-            unsafe { *direct_input_device } as _,
-            9,
-            i_direct_input_device_8_a_get_device_state_hook as _,
-            unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE },
-        );
-        setup_method_hook(
-            unsafe { *direct_input_device } as _,
-            13,
-            i_direct_input_device_8_a_set_cooperative_level_hook as _,
-            unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL },
-        );
+        unsafe {
+            let direct_input_device = *out_direct_input_device;
+            let vtable = *(direct_input_device as *const _);
+            setup_method_hook(
+                vtable,
+                9,
+                i_direct_input_device_8_a_get_device_state_hook as _,
+                &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE,
+            );
+            setup_method_hook(
+                vtable,
+                13,
+                i_direct_input_device_8_a_set_cooperative_level_hook as _,
+                &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL,
+            );
+        }
     }
     result
 }
@@ -158,14 +156,14 @@ pub extern "system" fn DirectInput8Create(
     inst: HINSTANCE,
     version: u32,
     riidltf: *const GUID,
-    out: *mut *mut c_void,
+    out: *mut *mut IDirectInput8A,
     unkouter: *const IUnknown,
 ) -> HRESULT {
     type Func = extern "system" fn(
         inst: HINSTANCE,
         version: u32,
         riidltf: *const GUID,
-        out: *mut *mut c_void,
+        out: *mut *mut IDirectInput8A,
         unkouter: *const IUnknown,
     ) -> HRESULT;
 
@@ -175,12 +173,19 @@ pub extern "system" fn DirectInput8Create(
         return result;
     }
 
-    setup_method_hook(
-        unsafe { *out } as _,
-        3,
-        i_direct_input_8_a_create_device_hook as _,
-        unsafe { &mut ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE },
-    );
+    // NOTE: vtable はコンストラクタ―から生成される全てのインスタンスで共通 (1敗)
+    if unsafe { ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE } == 0 {
+        unsafe {
+            let direct_input = *out;
+            let vtable = *(direct_input as *const _);
+            setup_method_hook(
+                vtable,
+                3,
+                i_direct_input_8_a_create_device_hook as _,
+                &mut ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE,
+            );
+        }
+    }
 
     result
 }
