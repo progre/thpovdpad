@@ -6,11 +6,11 @@ use std::{
 
 use encoding_rs::SHIFT_JIS;
 use windows::{
-    core::{IUnknown, GUID, HRESULT, HSTRING, PCWSTR},
+    core::{IUnknown, Interface, GUID, HRESULT, HSTRING, PCWSTR},
     s,
     Win32::{
         Devices::HumanInterfaceDevice::{
-            GUID_SysKeyboard, IDirectInput8W, IDirectInputDevice8A, DIJOYSTATE2, DISCL_FOREGROUND,
+            IDirectInput8A, IDirectInput8W, IDirectInputDevice8A, DIJOYSTATE, DISCL_FOREGROUND,
             DISCL_NONEXCLUSIVE, DISCL_NOWINKEY, DISFFC_CONTINUE,
         },
         Foundation::{FARPROC, HINSTANCE, HWND, MAX_PATH},
@@ -42,10 +42,10 @@ extern "system" fn i_direct_input_device_8_a_get_device_state_hook(
 
     let func: Func = unsafe { transmute(ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE) };
     let result = func(this, cb_data, lpv_data);
-    if result.is_err() || cb_data as usize != size_of::<DIJOYSTATE2>() {
+    if result.is_err() || (cb_data as usize) < size_of::<DIJOYSTATE>() {
         return result;
     }
-    let joy_state = lpv_data as *mut DIJOYSTATE2;
+    let joy_state = lpv_data as *mut DIJOYSTATE;
     modify_state(unsafe { joy_state.as_mut().unwrap() });
     result
 }
@@ -149,19 +149,19 @@ extern "system" fn i_direct_input_8_a_create_device_hook(
     if result.is_err() {
         return result;
     }
-    if unsafe { *guid } == GUID_SysKeyboard {
-        setup_method_hook(
-            unsafe { *direct_input_device } as _,
-            13,
-            i_direct_input_device_8_a_set_cooperative_level_hook as _,
-            unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL },
-        );
-    } else {
+    // NOTE: vtable はコンストラクタ―から生成される全てのインスタンスで共通 (1敗)
+    if unsafe { ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE } == 0 {
         setup_method_hook(
             unsafe { *direct_input_device } as _,
             9,
             i_direct_input_device_8_a_get_device_state_hook as _,
             unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE },
+        );
+        setup_method_hook(
+            unsafe { *direct_input_device } as _,
+            13,
+            i_direct_input_device_8_a_set_cooperative_level_hook as _,
+            unsafe { &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL },
         );
     }
     result
@@ -185,7 +185,7 @@ pub extern "system" fn DirectInput8Create(
 
     let func: Func = unsafe { transmute(ORIGINAL_DIRECT_INPUT8_CREATE) };
     let result = func(inst, version, riidltf, out, unkouter);
-    if result.is_err() {
+    if result.is_err() || unsafe { *riidltf } != IDirectInput8A::IID {
         return result;
     }
 

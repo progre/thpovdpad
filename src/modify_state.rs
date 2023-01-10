@@ -1,6 +1,6 @@
-use windows::Win32::Devices::HumanInterfaceDevice::DIJOYSTATE2;
+use windows::Win32::Devices::HumanInterfaceDevice::DIJOYSTATE;
 
-pub fn modify_state(joy_state: &mut DIJOYSTATE2) {
+pub fn modify_state(joy_state: &mut DIJOYSTATE) {
     for pov in joy_state.rgdwPOV {
         if (pov & 0xffffu32) != 0xffffu32 {
             if pov < 36000u32 / 16 {
