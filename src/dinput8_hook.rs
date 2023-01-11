@@ -74,7 +74,7 @@ fn write_log(msg: &str) {
         let new_tail = unsafe { current_tail.add(msg.len() - 1) };
         assert!(valid_addr_range.contains(&(new_tail as usize)));
 
-        unsafe { msg.as_ptr().copy_to(new_tail, capacity) };
+        unsafe { msg.as_ptr().copy_to(current_tail, capacity) };
         unsafe { *LOG_TAIL = new_tail };
     } else {
         println!("{}", msg);
