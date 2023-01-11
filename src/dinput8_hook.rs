@@ -31,22 +31,22 @@ static mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL: usize = 0;
 extern "system" fn i_direct_input_device_8_a_get_device_state_hook(
     this: *const IDirectInputDevice8A,
     cb_data: u32,
-    lpv_data: *mut c_void,
+    data: *mut c_void,
 ) -> HRESULT {
     type Func = extern "system" fn(
         this: *const IDirectInputDevice8A,
         cb_data: u32,
         lpv_data: *mut c_void,
     ) -> HRESULT;
-
     let func: Func = unsafe { transmute(ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE) };
-    let result = func(this, cb_data, lpv_data);
+    let result = func(this, cb_data, data);
+
     if result.is_err()
         || ![size_of::<DIJOYSTATE>(), size_of::<DIJOYSTATE2>()].contains(&(cb_data as usize))
     {
         return result;
     }
-    let joy_state = lpv_data as *mut DIJOYSTATE;
+    let joy_state = data as *mut DIJOYSTATE;
     modify_state(unsafe { joy_state.as_mut().unwrap() });
     result
 }
@@ -88,19 +88,19 @@ extern "system" fn i_direct_input_device_8_a_set_cooperative_level_hook(
 ) -> HRESULT {
     type Func =
         extern "system" fn(this: *const IDirectInputDevice8A, hwnd: HWND, flags: u32) -> HRESULT;
-
     let func: Func = unsafe { transmute(ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL) };
     let result = func(this, hwnd, flags);
-    if result.is_err()
-        && hwnd == HWND(0)
-        && flags == DISCL_NOWINKEY + DISCL_FOREGROUND + DISCL_NONEXCLUSIVE
-    {
-        // HACK: 地霊殿のみ dinput8 の初期化に失敗する為無理矢理成功させる
-        write_log("【THPovDpad】 SetCooperativeLevel() をパッチします");
 
-        return func(this, HWND(0), DISFFC_CONTINUE + DISCL_NONEXCLUSIVE);
+    if result.is_ok()
+        || hwnd != HWND(0)
+        || flags != DISCL_NOWINKEY + DISCL_FOREGROUND + DISCL_NONEXCLUSIVE
+    {
+        return result;
     }
-    result
+    // HACK: 地霊殿のみ dinput8 の初期化に失敗する為無理矢理成功させる
+    write_log("【THPovDpad】 SetCooperativeLevel() をパッチします");
+
+    func(this, HWND(0), DISFFC_CONTINUE + DISCL_NONEXCLUSIVE)
 }
 
 unsafe fn setup_method_hook(
@@ -126,9 +126,9 @@ extern "system" fn i_direct_input_8_a_create_device_hook(
         out_direct_input_device: *mut *mut IDirectInputDevice8A,
         unk_outer: *const IUnknown,
     ) -> HRESULT;
-
     let func: Func = unsafe { transmute(ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE) };
     let result = func(this, guid, out_direct_input_device, unk_outer);
+
     if result.is_err() {
         return result;
     }
@@ -150,6 +150,7 @@ extern "system" fn i_direct_input_8_a_create_device_hook(
             );
         }
     }
+
     result
 }
 
@@ -168,13 +169,12 @@ pub extern "system" fn DirectInput8Create(
         out: *mut *mut IDirectInput8A,
         unkouter: *const IUnknown,
     ) -> HRESULT;
-
     let func: Func = unsafe { transmute(ORIGINAL_DIRECT_INPUT8_CREATE) };
     let result = func(inst, version, riidltf, out, unkouter);
+
     if result.is_err() || unsafe { *riidltf } != IDirectInput8A::IID {
         return result;
     }
-
     // NOTE: vtable はコンストラクタ―から生成される全てのインスタンスで共通 (1敗)
     if unsafe { ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE } == 0 {
         unsafe {
