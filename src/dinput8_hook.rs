@@ -10,8 +10,8 @@ use windows::{
     s,
     Win32::{
         Devices::HumanInterfaceDevice::{
-            IDirectInput8A, IDirectInputDevice8A, DIJOYSTATE, DIJOYSTATE2, DISCL_FOREGROUND,
-            DISCL_NONEXCLUSIVE, DISCL_NOWINKEY, DISFFC_CONTINUE,
+            IDirectInput8A, IDirectInputDevice8A, DIJOYSTATE, DIJOYSTATE2, DISCL_BACKGROUND,
+            DISCL_FOREGROUND, DISCL_NONEXCLUSIVE, DISCL_NOWINKEY,
         },
         Foundation::{FARPROC, HINSTANCE, HWND, MAX_PATH},
         System::{
@@ -100,7 +100,7 @@ extern "system" fn i_direct_input_device_8_a_set_cooperative_level_hook(
     // HACK: 地霊殿のみ dinput8 の初期化に失敗する為無理矢理成功させる
     write_log("【THPovDpad】 SetCooperativeLevel() をパッチします");
 
-    func(this, HWND(0), DISFFC_CONTINUE + DISCL_NONEXCLUSIVE)
+    func(this, HWND(0), DISCL_BACKGROUND + DISCL_NONEXCLUSIVE)
 }
 
 unsafe fn setup_method_hook(
@@ -159,14 +159,14 @@ pub extern "system" fn DirectInput8Create(
     inst: HINSTANCE,
     version: u32,
     riidltf: *const GUID,
-    out: *mut *mut IDirectInput8A,
+    out: *mut *mut c_void,
     unkouter: *const IUnknown,
 ) -> HRESULT {
     type Func = extern "system" fn(
         inst: HINSTANCE,
         version: u32,
         riidltf: *const GUID,
-        out: *mut *mut IDirectInput8A,
+        out: *mut *mut c_void,
         unkouter: *const IUnknown,
     ) -> HRESULT;
     let func: Func = unsafe { transmute(ORIGINAL_DIRECT_INPUT8_CREATE) };
