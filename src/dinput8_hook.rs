@@ -57,7 +57,7 @@ fn write_log(msg: &str) {
     let filepath = unsafe {
         let mut buf = [0u16; MAX_PATH as usize];
         GetModuleFileNameW(HINSTANCE(0), &mut buf);
-        PCWSTR::from_raw(buf.as_mut_ptr()).to_string().unwrap()
+        PCWSTR::from_raw(buf.as_ptr()).to_string().unwrap()
     };
 
     if File::open(filepath).unwrap().metadata().unwrap().len() == TH11_EXE_SIZE {
@@ -196,7 +196,7 @@ pub fn setup_dinput8_hook() {
     let system_directory = unsafe {
         let mut buf = [0u16; MAX_PATH as usize];
         GetSystemDirectoryW(Some(&mut buf));
-        PCWSTR::from_raw(buf.as_mut_ptr()).to_string().unwrap()
+        PCWSTR::from_raw(buf.as_ptr()).to_string().unwrap()
     };
     let dll_path = format!("{}\\dinput8.dll", system_directory);
     let dll_instance = unsafe { LoadLibraryW(PCWSTR::from(&HSTRING::from(dll_path))) }.unwrap();
