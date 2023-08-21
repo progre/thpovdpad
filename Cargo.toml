@@ -27,4 +27,4 @@ windows = { version = "0.43.0", features = [
 [package.metadata.winres]
 LegalCopyright = "© Progre"
 ProductName = "thpovdpad"
-FileDescription = ""
+FileDescription = "https://github.com/progre/thpovdpad/"
