@@ -2,12 +2,12 @@ use std::{
     ffi::c_void,
     fs::File,
     mem::{size_of, transmute},
+    ptr::addr_of_mut,
 };
 
 use encoding_rs::SHIFT_JIS;
 use windows::{
-    core::{IUnknown, Interface, GUID, HRESULT, HSTRING, PCWSTR},
-    s,
+    core::{s, IUnknown, Interface, GUID, HRESULT, HSTRING, PCWSTR},
     Win32::{
         Devices::HumanInterfaceDevice::{
             IDirectInput8A, IDirectInput8W, IDirectInputDevice8A, IDirectInputDevice8W, DIJOYSTATE,
@@ -162,18 +162,16 @@ extern "system" fn i_direct_input_8_a_create_device_hook(
         unsafe {
             let direct_input_device = *out_direct_input_device;
             let vtable = *(direct_input_device as *const _);
-            setup_method_hook(
-                vtable,
-                9,
-                i_direct_input_device_8_a_get_device_state_hook as _,
-                &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE,
-            );
-            setup_method_hook(
-                vtable,
-                13,
-                i_direct_input_device_8_a_set_cooperative_level_hook as _,
-                &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL,
-            );
+
+            let hooked_method_addr = i_direct_input_device_8_a_get_device_state_hook as _;
+            let original_method_addr =
+                &mut *addr_of_mut!(ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_GET_DEVICE_STATE);
+            setup_method_hook(vtable, 9, hooked_method_addr, original_method_addr);
+
+            let hooked_method_addr = i_direct_input_device_8_a_set_cooperative_level_hook as _;
+            let original_method_addr =
+                &mut *addr_of_mut!(ORIGINAL_I_DIRECT_INPUT_DEVICE_8_A_SET_COOPERATIVE_LEVEL);
+            setup_method_hook(vtable, 13, hooked_method_addr, original_method_addr);
         }
     }
 
@@ -202,12 +200,10 @@ extern "system" fn i_direct_input_8_w_create_device_hook(
         unsafe {
             let direct_input_device = *out_direct_input_device;
             let vtable = *(direct_input_device as *const _);
-            setup_method_hook(
-                vtable,
-                9,
-                i_direct_input_device_8_w_get_device_state_hook as _,
-                &mut ORIGINAL_I_DIRECT_INPUT_DEVICE_8_W_GET_DEVICE_STATE,
-            );
+            let hooked_method_addr = i_direct_input_device_8_w_get_device_state_hook as _;
+            let original_method_addr =
+                &mut *addr_of_mut!(ORIGINAL_I_DIRECT_INPUT_DEVICE_8_W_GET_DEVICE_STATE);
+            setup_method_hook(vtable, 9, hooked_method_addr, original_method_addr);
         }
     }
 
@@ -242,12 +238,10 @@ pub extern "system" fn DirectInput8Create(
                 unsafe {
                     let direct_input = *out;
                     let vtable = *(direct_input as *const _);
-                    setup_method_hook(
-                        vtable,
-                        3,
-                        i_direct_input_8_a_create_device_hook as _,
-                        &mut ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE,
-                    );
+                    let hooked_method_addr = i_direct_input_8_a_create_device_hook as _;
+                    let original_method_addr =
+                        &mut *addr_of_mut!(ORIGINAL_I_DIRECT_INPUT_8_A_CREATE_DEVICE);
+                    setup_method_hook(vtable, 3, hooked_method_addr, original_method_addr);
                 }
             }
         }
@@ -256,12 +250,10 @@ pub extern "system" fn DirectInput8Create(
                 unsafe {
                     let direct_input = *out;
                     let vtable = *(direct_input as *const _);
-                    setup_method_hook(
-                        vtable,
-                        3,
-                        i_direct_input_8_w_create_device_hook as _,
-                        &mut ORIGINAL_I_DIRECT_INPUT_8_W_CREATE_DEVICE,
-                    );
+                    let hooked_method_addr = i_direct_input_8_w_create_device_hook as _;
+                    let original_method_addr =
+                        &mut *addr_of_mut!(ORIGINAL_I_DIRECT_INPUT_8_W_CREATE_DEVICE);
+                    setup_method_hook(vtable, 3, hooked_method_addr, original_method_addr);
                 }
             }
         }
@@ -278,7 +270,9 @@ pub fn setup() {
         PCWSTR::from_raw(buf.as_ptr()).to_string().unwrap()
     };
     let dll_path = format!("{}\\dinput8.dll", system_directory);
-    let dll_instance = unsafe { LoadLibraryW(PCWSTR::from(&HSTRING::from(dll_path))) }.unwrap();
+    let dll_instance =
+        unsafe { LoadLibraryW(PCWSTR::from_raw(HSTRING::from(dll_path).as_wide().as_ptr())) }
+            .unwrap();
 
     if dll_instance.is_invalid() {
         panic!();
