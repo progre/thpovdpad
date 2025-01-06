@@ -1,4 +1,9 @@
+mod custom_direct_input_8a;
+mod custom_direct_input_8w;
+mod custom_direct_input_device_8a;
+mod custom_direct_input_device_8w;
 mod dinput8_hook;
+mod direct_input_device_8_delegate;
 mod modify_state;
 
 use std::ffi::c_void;
